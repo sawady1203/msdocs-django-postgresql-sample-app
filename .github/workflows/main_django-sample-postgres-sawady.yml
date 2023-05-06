@@ -1,63 +1,61 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
-
-name: Build and deploy Python app to Azure Web App - django-sample-postgres-sawady
+name: Azure Developer CLI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    container:
+      image: mcr.microsoft.com/azure-dev-cli-apps:latest
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v2
 
-      - name: Set up Python version
-        uses: actions/setup-python@v1
-        with:
-          python-version: '3.10'
-
-      - name: Create and start virtual environment
+      - name: Log in with Azure (Federated Credentials)
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
         run: |
-          python -m venv venv
-          source venv/bin/activate
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-        
-      # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
-      
-      - name: Upload artifact for deployment jobs
-        uses: actions/upload-artifact@v2
-        with:
-          name: python-app
-          path: |
-            . 
-            !venv/
+          azd login `
+            --client-id "$Env:AZURE_CLIENT_ID" `
+            --federated-credential-provider "github" `
+            --tenant-id "$Env:AZURE_TENANT_ID"
+        shell: pwsh
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+      - name: Log in with Azure (Client Credentials)
+        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        run: |
+          $info = $Env:AZURE_CREDENTIALS | ConvertFrom-Json -AsHashtable;
+          Write-Host "::add-mask::$($info.clientSecret)"
+          azd login `
+            --client-id "$($info.clientId)" `
+            --client-secret "$($info.clientSecret)" `
+            --tenant-id "$($info.tenantId)"
+        shell: pwsh
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v2
-        with:
-          name: python-app
-          path: .
-          
-      - name: 'Deploy to Azure Web App'
-        uses: azure/webapps-deploy@v2
-        id: deploy-to-webapp
-        with:
-          app-name: 'django-sample-postgres-sawady'
-          slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_50CEB66F0C8F4EFBACA156B77E3FB3F9 }}
+      - name: Azure Dev Provision
+        run: azd provision --no-prompt
+        env:
+          AZURE_ENV_NAME: ${{ secrets.AZURE_ENV_NAME }}
+          AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure Dev Deploy
+        run: azd deploy --no-prompt
+        env:
+          AZURE_ENV_NAME: ${{ secrets.AZURE_ENV_NAME }}
+          AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
